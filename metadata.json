@@ -1,0 +1,8 @@
+{
+  "name": "Shreyas' In Class Assignment",
+  "description": "Interactive Diode Bridge and Thyristor Controlled Rectifier Studio with real-time schematic and precision multi-channel waveforms.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
