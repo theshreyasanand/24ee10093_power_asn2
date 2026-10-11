@@ -37,13 +37,13 @@ export const FourQuadrantPlot: React.FC<FourQuadrantPlotProps> = ({
   const currentY = cy - Math.max(-maxV, Math.min(maxV, vDcAvg)) * scaleY;
 
   return (
-    <div className="flex-1 flex flex-col p-6 bg-white overflow-y-auto">
+    <div className="flex-1 flex flex-col p-6 bg-white dark:bg-slate-900 overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
         <div>
-          <h3 className="text-base font-semibold text-slate-900">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-white">
             Four-Quadrant Operation (Dual Converter)
           </h3>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Two anti-parallel thyristor bridges enable bidirectional voltage and current control
           </p>
         </div>
@@ -61,7 +61,7 @@ export const FourQuadrantPlot: React.FC<FourQuadrantPlotProps> = ({
             className={`px-2.5 py-1 rounded border font-mono font-medium transition-colors ${
               quadrant === 1
                 ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                : 'bg-slate-50 dark:bg-slate-850 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:bg-slate-800'
             }`}
           >
             Q1: Fwd Motoring (α1=30°)
@@ -77,7 +77,7 @@ export const FourQuadrantPlot: React.FC<FourQuadrantPlotProps> = ({
             className={`px-2.5 py-1 rounded border font-mono font-medium transition-colors ${
               quadrant === 2
                 ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                : 'bg-slate-50 dark:bg-slate-850 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:bg-slate-800'
             }`}
           >
             Q2: Fwd Regen (α1=120°)
@@ -93,7 +93,7 @@ export const FourQuadrantPlot: React.FC<FourQuadrantPlotProps> = ({
             className={`px-2.5 py-1 rounded border font-mono font-medium transition-colors ${
               quadrant === 3
                 ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                : 'bg-slate-50 dark:bg-slate-850 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:bg-slate-800'
             }`}
           >
             Q3: Rev Motoring (α2=30°)
@@ -109,7 +109,7 @@ export const FourQuadrantPlot: React.FC<FourQuadrantPlotProps> = ({
             className={`px-2.5 py-1 rounded border font-mono font-medium transition-colors ${
               quadrant === 4
                 ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                : 'bg-slate-50 dark:bg-slate-850 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:bg-slate-800'
             }`}
           >
             Q4: Rev Regen (α2=120°)
@@ -282,7 +282,7 @@ export const FourQuadrantPlot: React.FC<FourQuadrantPlotProps> = ({
       </div>
 
       {/* Control State explanation footer */}
-      <div className="mt-4 p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+      <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-850 rounded-lg border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex flex-wrap items-center justify-between gap-2">
         <div className="font-mono">
           Bridge 1 α1 = <span className="font-semibold text-blue-600">{firingAngleAlpha}°</span> | Bridge 2 α2 = <span className="font-semibold text-indigo-600">{firingAngleAlpha2}°</span> (α1 + α2 = 180°)
         </div>

@@ -16,6 +16,7 @@ export interface ConverterParameters {
   dualBridgeMode: 'non-circulating' | 'circulating';
   activeBridgeInDual: 1 | 2; // For non-circulating mode
   showFreewheelingDiode: boolean;
+  switchOverrides?: Record<string, 'thyristor' | 'diode'>;
 }
 
 export interface SwitchState {

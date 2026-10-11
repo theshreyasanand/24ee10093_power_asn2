@@ -16,8 +16,8 @@ import { Header } from './components/Header';
 import { Schematic } from './components/Schematic';
 import { WaveformDisplay, WaveformViewMode } from './components/WaveformDisplay';
 import { TransportControls } from './components/TransportControls';
-import { ControlsPanel } from './components/ControlsPanel';
 import { MetricsCards } from './components/MetricsCards';
+import { ControlsPanel } from './components/ControlsPanel';
 import { HarmonicsChart } from './components/HarmonicsChart';
 import { FourQuadrantPlot } from './components/FourQuadrantPlot';
 import { TheoryModal } from './components/TheoryModal';
@@ -42,10 +42,33 @@ export default function App() {
   const [params, setParams] = useState<ConverterParameters>(DEFAULT_PARAMS);
   const [currentAngleRad, setCurrentAngleRad] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
-  const [speedMultiplier, setSpeedMultiplier] = useState<number>(0.5);
+  const [speedMultiplier, setSpeedMultiplier] = useState<number>(0.2);
   const [viewMode, setViewMode] = useState<WaveformViewMode>('superimposed');
   const [isTheoryOpen, setIsTheoryOpen] = useState<boolean>(false);
   const [isSchematicFullScreen, setIsSchematicFullScreen] = useState<boolean>(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme-dark');
+      if (saved !== null) return saved === 'true';
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+
+  // Keep dark class synced on <html>
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme-dark', 'true');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme-dark', 'false');
+    }
+  }, [isDarkMode]);
+
+  const toggleDarkMode = useCallback(() => {
+    setIsDarkMode((prev) => !prev);
+  }, []);
 
   // Animation frame reference
   const lastTimeRef = useRef<number | null>(null);
@@ -71,7 +94,7 @@ export default function App() {
     setParams((prev) => ({ ...prev, ...newParams }));
   }, []);
 
-  // Animation loop
+  // Animation loop (slowed down for clear visual tracking of waveforms & firing pulses)
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -82,10 +105,10 @@ export default function App() {
     const animate = (timestamp: number) => {
       if (lastTimeRef.current !== null) {
         const deltaMs = timestamp - lastTimeRef.current;
-        // Supply angular frequency omega = 2 * PI * f
-        // Angle delta = omega * delta_t * speedMultiplier
-        const omega = 2 * PI * params.frequency;
-        const deltaAngle = (omega * (deltaMs / 1000)) * (speedMultiplier * 0.12);
+        // Smooth educational speed: 1 electrical cycle (2*PI) takes ~6 seconds at 1.0x speed
+        // At default 0.2x speed, 1 cycle takes 30 seconds for crystal clear observation
+        const baseAngularSpeed = (2 * PI) / 6.0;
+        const deltaAngle = baseAngularSpeed * (deltaMs / 1000) * speedMultiplier;
 
         setCurrentAngleRad((prev) => (prev + deltaAngle) % TWO_PI);
       }
@@ -98,7 +121,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, speedMultiplier, params.frequency]);
+  }, [isPlaying, speedMultiplier]);
 
   // Step angle by delta degrees
   const handleStep = useCallback((deltaDeg: number) => {
@@ -161,35 +184,14 @@ export default function App() {
         });
         setViewMode('superimposed');
         break;
-      case 'dual-q1':
-        setParams({
-          ...DEFAULT_PARAMS,
-          topology: 'double-bridge',
-          firingAngleAlpha: 30,
-          firingAngleAlpha2: 150,
-          activeBridgeInDual: 1,
-          dualBridgeMode: 'non-circulating',
-        });
-        setViewMode('four-quadrant');
-        break;
-      case 'dual-q4':
-        setParams({
-          ...DEFAULT_PARAMS,
-          topology: 'double-bridge',
-          firingAngleAlpha: 60,
-          firingAngleAlpha2: 120,
-          activeBridgeInDual: 2,
-          dualBridgeMode: 'non-circulating',
-        });
-        setViewMode('four-quadrant');
-        break;
+
       default:
         break;
     }
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       {/* Top Application Header */}
       <Header
         params={params}
@@ -200,6 +202,11 @@ export default function App() {
           setCurrentAngleRad(0);
           setIsPlaying(true);
         }}
+        onUpdateParams={handleUpdateParams}
+        speedMultiplier={speedMultiplier}
+        onSpeedChange={setSpeedMultiplier}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={toggleDarkMode}
       />
 
       {/* Main Studio Viewport */}
@@ -207,7 +214,7 @@ export default function App() {
         {/* Top Split View: Schematic (Left) & Waveforms (Right) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
           {/* Left Column: Circuit Schematic Diagram */}
-          <div className="lg:col-span-6 flex flex-col h-[520px] lg:h-[600px]">
+          <div className="lg:col-span-6 flex flex-col min-h-[560px] lg:h-[660px]">
             <Schematic
               params={params}
               instantaneous={instantaneous}
@@ -218,11 +225,11 @@ export default function App() {
           </div>
 
           {/* Right Column: Waveform Display / Multi-Channel / FFT / 4-Quadrant */}
-          <div className="lg:col-span-6 flex flex-col h-[520px] lg:h-[600px]">
+          <div className="lg:col-span-6 flex flex-col min-h-[560px] lg:h-[660px]">
             {viewMode === 'harmonics' ? (
-              <div className="h-full bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col">
-                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-50/80">
-                  <div className="text-xs font-semibold text-slate-700">
+              <div className="h-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs flex flex-col">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/90">
+                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     Frequency Domain Analysis
                   </div>
                   <button
@@ -235,9 +242,9 @@ export default function App() {
                 <HarmonicsChart samples={samplesForMetrics} metrics={metrics} />
               </div>
             ) : viewMode === 'four-quadrant' ? (
-              <div className="h-full bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col">
-                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-50/80">
-                  <div className="text-xs font-semibold text-slate-700">
+              <div className="h-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs flex flex-col">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/90">
+                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     Double Bridge 4-Quadrant Plane
                   </div>
                   <button
@@ -277,13 +284,13 @@ export default function App() {
             setIsPlaying(false);
             setCurrentAngleRad(angle);
           }}
-          speedMultiplier={speedMultiplier}
-          onSpeedChange={setSpeedMultiplier}
           onStep={handleStep}
           onReset={handleResetAngle}
+          params={params}
+          onUpdateParams={handleUpdateParams}
         />
 
-        {/* Analytical Derivations & Performance Metrics Cards */}
+        {/* Analog Instrument Gauges & Performance Metrics */}
         <MetricsCards metrics={metrics} params={params} />
 
         {/* Converter Circuit & Parameter Control Drawer */}

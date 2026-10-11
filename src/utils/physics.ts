@@ -16,6 +16,19 @@ export function radToDeg(rad: number): number {
   return (rad * 180) / PI;
 }
 
+export function getSwitchDeviceType(
+  switchId: string,
+  params: ConverterParameters
+): 'thyristor' | 'diode' {
+  if (params.switchOverrides && params.switchOverrides[switchId]) {
+    return params.switchOverrides[switchId];
+  }
+  if (params.topology === 'diode-bridge') {
+    return 'diode';
+  }
+  return 'thyristor';
+}
+
 /**
  * Calculates instantaneous circuit values at angle theta (in radians, from 0 to 2*PI or beyond)
  */
@@ -62,14 +75,33 @@ export function getInstantaneousValues(
   let gatePulseB2T1T2 = false;
   let gatePulseB2T3T4 = false;
 
+  // Individual switch types for Bridge 1
+  const s1Type = getSwitchDeviceType('T1', params);
+  const s2Type = getSwitchDeviceType('T2', params);
+  const s3Type = getSwitchDeviceType('T3', params);
+  const s4Type = getSwitchDeviceType('T4', params);
+
+  const isS1Thyristor = s1Type === 'thyristor';
+  const isS2Thyristor = s2Type === 'thyristor';
+  const isS3Thyristor = s3Type === 'thyristor';
+  const isS4Thyristor = s4Type === 'thyristor';
+
+  const s1Name = isS1Thyristor ? 'T1' : 'D1';
+  const s2Name = isS2Thyristor ? 'T2' : 'D2';
+  const s3Name = isS3Thyristor ? 'T3' : 'D3';
+  const s4Name = isS4Thyristor ? 'T4' : 'D4';
+
+  // Firing angles for each pair:
+  // If either switch in the positive loop is a thyristor, it requires gating at alpha
+  const alphaPosRad = (isS1Thyristor || isS2Thyristor) ? alphaRad : 0;
+  // If either switch in the negative loop is a thyristor, it requires gating at alpha after PI
+  const alphaNegRad = (isS3Thyristor || isS4Thyristor) ? alphaRad : 0;
+
   // Gate pulses for Bridge 1
-  if (normTheta >= alphaRad && normTheta <= alphaRad + pulseWidthRad) {
+  if ((isS1Thyristor || isS2Thyristor) && normTheta >= alphaRad && normTheta <= alphaRad + pulseWidthRad) {
     gatePulseT1T2 = true;
   }
-  if (
-    normTheta >= PI + alphaRad &&
-    normTheta <= PI + alphaRad + pulseWidthRad
-  ) {
+  if ((isS3Thyristor || isS4Thyristor) && normTheta >= PI + alphaRad && normTheta <= PI + alphaRad + pulseWidthRad) {
     gatePulseT3T4 = true;
   }
 
@@ -84,48 +116,35 @@ export function getInstantaneousValues(
     gatePulseB2T3T4 = true;
   }
 
-  if (topology === 'diode-bridge') {
-    // Uncontrolled Diode Bridge Rectifier
-    if (normTheta >= 0 && normTheta < PI) {
-      // Positive half cycle: D1 & D2 conduct
-      activeSwitches.push('D1', 'D2');
-      activePairLabel = 'D1 + D2 (Forward)';
-      vo = vs;
-      is = computeLoadCurrent(vo, normTheta, 0, PI, params);
-      io = is;
-    } else {
-      // Negative half cycle: D3 & D4 conduct
-      activeSwitches.push('D3', 'D4');
-      activePairLabel = 'D3 + D4 (Reverse)';
-      vo = -vs;
-      io = computeLoadCurrent(vo, normTheta, PI, TWO_PI, params);
-      is = -io;
-    }
+  if (topology !== 'double-bridge') {
+    // Single Bridge (Controlled, Uncontrolled, or Mixed/Semi-converter)
+    const isInductive = loadType === 'RL' || loadType === 'RLE';
+    const isContinuous = highlyInductive || (isInductive && inductance > 0.02);
 
-    if (loadType === 'RLE' && vo < backEmf) {
-      vo = backEmf;
-      io = 0;
-      is = 0;
-      activeSwitches.length = 0;
-      activePairLabel = 'OFF (vo < E)';
-    }
+    // Freewheeling capability at zero-crossings depends on which specific switches are diodes:
+    // In positive delay (0 <= normTheta < alphaPosRad, vs > 0):
+    // Requires D_FW OR an incoming diode that can turn on naturally at vs > 0:
+    // Leg 1 freewheel: S1 is diode (D1 anode at Phase A > 0, connects to S4 which was on)
+    // Leg 2 freewheel: S2 is diode (D2 cathode at Neutral < 0, connects to S3 which was on)
+    const canFreewheelPos = showFreewheelingDiode || !isS1Thyristor || !isS2Thyristor;
 
-    vBridge1 = vo;
-  } else if (topology === 'single-thyristor') {
-    // Single Phase Fully Controlled Bridge Rectifier
-    const isContinuous = highlyInductive || (loadType === 'RL' && inductance > 0.02);
+    // In negative delay (PI <= normTheta < PI + alphaNegRad, vs < 0):
+    // Requires D_FW OR an incoming diode that can turn on naturally at vs < 0:
+    // Leg 1 freewheel: S4 is diode (D4 cathode at Phase A < 0, connects to S1 which was on)
+    // Leg 2 freewheel: S3 is diode (D3 anode at Neutral > 0, connects to S2 which was on)
+    const canFreewheelNeg = showFreewheelingDiode || !isS4Thyristor || !isS3Thyristor;
 
-    if (loadType === 'R') {
-      // Pure Resistive Load: conducts from alpha to PI, and PI+alpha to 2PI
-      if (normTheta >= alphaRad && normTheta < PI) {
-        activeSwitches.push('T1', 'T2');
-        activePairLabel = 'Bridge Pair T1 + T2';
+    if (!isInductive) {
+      // Pure Resistive Load (R)
+      if (normTheta >= alphaPosRad && normTheta < PI) {
+        activeSwitches.push(s1Name, s2Name);
+        activePairLabel = `${s1Name} + ${s2Name} (Conducting)`;
         vo = vs;
         io = vo / Math.max(resistance, 0.1);
         is = io;
-      } else if (normTheta >= PI + alphaRad && normTheta < TWO_PI) {
-        activeSwitches.push('T3', 'T4');
-        activePairLabel = 'Bridge Pair T3 + T4';
+      } else if (normTheta >= PI + alphaNegRad && normTheta < TWO_PI) {
+        activeSwitches.push(s3Name, s4Name);
+        activePairLabel = `${s3Name} + ${s4Name} (Conducting)`;
         vo = -vs;
         io = vo / Math.max(resistance, 0.1);
         is = -io;
@@ -133,54 +152,99 @@ export function getInstantaneousValues(
         vo = 0;
         io = 0;
         is = 0;
-        activePairLabel = 'Natural Extinction (Zero)';
+        activePairLabel = 'Blocking / Off Interval';
       }
     } else {
-      // RL or RLE Load
-      // In continuous conduction:
-      // Interval 1: [alpha, PI + alpha] -> T1 and T2 conduct, vo = vs
-      // Interval 2: [PI + alpha, 2PI + alpha] -> T3 and T4 conduct, vo = -vs
+      // Inductive Load (RL or RLE)
       if (isContinuous) {
-        if (normTheta >= alphaRad && normTheta < PI + alphaRad) {
-          activeSwitches.push('T1', 'T2');
-          activePairLabel = 'Bridge Pair T1 + T2';
+        // Continuous Conduction Mode
+        if (normTheta >= alphaPosRad && normTheta < PI) {
+          // Positive half cycle active conduction
+          activeSwitches.push(s1Name, s2Name);
+          activePairLabel = `${s1Name} + ${s2Name} (Active)`;
           vo = vs;
-          io = computeContinuousCurrent(normTheta, alphaRad, params);
+          io = computeContinuousCurrent(normTheta, alphaPosRad, params);
           is = io;
-        } else {
-          activeSwitches.push('T3', 'T4');
-          activePairLabel = 'Bridge Pair T3 + T4';
+        } else if (normTheta >= PI && normTheta < PI + alphaNegRad) {
+          // Commutation / delay interval in negative cycle
+          if (canFreewheelNeg) {
+            // Natural freewheeling clamp through diode(s) or D_FW
+            vo = 0;
+            if (showFreewheelingDiode) {
+              activeSwitches.push('D_FW');
+              activePairLabel = 'Freewheeling (D_FW)';
+            } else if (!isS4Thyristor) {
+              activeSwitches.push(s1Name, s4Name);
+              activePairLabel = `Freewheeling (${s1Name}+${s4Name})`;
+            } else {
+              activeSwitches.push(s3Name, s2Name);
+              activePairLabel = `Freewheeling (${s3Name}+${s2Name})`;
+            }
+            io = computeContinuousCurrent(normTheta, alphaPosRad, params);
+            is = 0;
+          } else {
+            // Neither S3 nor S4 is a diode, and no D_FW:
+            // Both are thyristors waiting for firing pulse at PI + alpha!
+            // Inductive current forces incoming pair (S1 + S2) to remain ON -> Negative Excursion
+            activeSwitches.push(s1Name, s2Name);
+            activePairLabel = `${s1Name} + ${s2Name} (Negative Excursion)`;
+            vo = vs; // vs < 0
+            io = computeContinuousCurrent(normTheta, alphaPosRad, params);
+            is = io;
+          }
+        } else if (normTheta >= PI + alphaNegRad && normTheta < TWO_PI) {
+          // Negative half cycle active conduction
+          activeSwitches.push(s3Name, s4Name);
+          activePairLabel = `${s3Name} + ${s4Name} (Active)`;
           vo = -vs;
-          const refAngle = normTheta < alphaRad ? normTheta + TWO_PI : normTheta;
-          io = computeContinuousCurrent(refAngle - PI, alphaRad, params);
+          const refAngle = normTheta - PI;
+          io = computeContinuousCurrent(refAngle, alphaNegRad, params);
           is = -io;
-        }
-
-        // Freewheeling diode clamp if enabled
-        if (showFreewheelingDiode && vo < 0) {
-          vo = 0;
-          activeSwitches.length = 0;
-          activeSwitches.push('D_FW');
-          activePairLabel = 'Freewheeling Diode D_FW';
-          is = 0; // Source disconnected while freewheeling
+        } else {
+          // normTheta < alphaPosRad: delay interval in positive cycle
+          if (canFreewheelPos) {
+            // Natural freewheeling clamp through diode(s) or D_FW
+            vo = 0;
+            if (showFreewheelingDiode) {
+              activeSwitches.push('D_FW');
+              activePairLabel = 'Freewheeling (D_FW)';
+            } else if (!isS1Thyristor) {
+              activeSwitches.push(s1Name, s4Name);
+              activePairLabel = `Freewheeling (${s1Name}+${s4Name})`;
+            } else {
+              activeSwitches.push(s3Name, s2Name);
+              activePairLabel = `Freewheeling (${s3Name}+${s2Name})`;
+            }
+            io = computeContinuousCurrent(normTheta + PI, alphaNegRad, params);
+            is = 0;
+          } else {
+            // Neither S1 nor S2 is a diode, and no D_FW:
+            // Both are thyristors waiting for firing pulse at alpha!
+            // Inductive current forces previous pair (S3 + S4) to remain ON -> Negative Excursion
+            activeSwitches.push(s3Name, s4Name);
+            activePairLabel = `${s3Name} + ${s4Name} (Negative Excursion)`;
+            vo = -vs; // -vs < 0 because vs > 0
+            io = computeContinuousCurrent(normTheta + PI, alphaNegRad, params);
+            is = -io;
+          }
         }
       } else {
-        // Discontinuous Conduction mode with extinction angle beta
-        const extinctionAngle = computeExtinctionAngle(alphaRad, params);
-        if (normTheta >= alphaRad && normTheta < extinctionAngle) {
-          activeSwitches.push('T1', 'T2');
-          activePairLabel = 'T1 + T2 (Conducting)';
+        // Discontinuous Conduction Mode
+        const extinctionAngle = computeExtinctionAngle(alphaPosRad, params);
+        if (normTheta >= alphaPosRad && normTheta < extinctionAngle) {
+          activeSwitches.push(s1Name, s2Name);
+          activePairLabel = `${s1Name} + ${s2Name} (Conducting)`;
           vo = vs;
-          io = computeDiscontinuousCurrent(normTheta, alphaRad, params);
+          io = computeDiscontinuousCurrent(normTheta, alphaPosRad, params);
           is = io;
         } else if (
-          normTheta >= PI + alphaRad &&
-          normTheta < Math.min(TWO_PI, PI + extinctionAngle)
+          normTheta >= PI + alphaNegRad &&
+          normTheta < Math.min(TWO_PI, PI + computeExtinctionAngle(alphaNegRad, params))
         ) {
-          activeSwitches.push('T3', 'T4');
-          activePairLabel = 'T3 + T4 (Conducting)';
+          activeSwitches.push(s3Name, s4Name);
+          activePairLabel = `${s3Name} + ${s4Name} (Conducting)`;
           vo = -vs;
-          io = computeDiscontinuousCurrent(normTheta - PI, alphaRad, params);
+          io = computeDiscontinuousCurrent(normTheta - PI, alphaNegRad, params);
           is = -io;
         } else {
           vo = loadType === 'RLE' ? backEmf : 0;
@@ -188,7 +252,39 @@ export function getInstantaneousValues(
           is = 0;
           activePairLabel = 'Discontinuous Interval (OFF)';
         }
+
+        if (showFreewheelingDiode && vo < 0) {
+          vo = 0;
+          activeSwitches.length = 0;
+          activeSwitches.push('D_FW');
+          activePairLabel = 'Freewheeling Diode D_FW';
+          is = 0;
+        } else if (vo < 0) {
+          const isNeg = normTheta >= PI;
+          const canFw = isNeg ? canFreewheelNeg : canFreewheelPos;
+          if (canFw) {
+            vo = 0;
+            is = 0;
+            activeSwitches.length = 0;
+            if (isNeg) {
+              if (!isS4Thyristor) activeSwitches.push(s1Name, s4Name);
+              else activeSwitches.push(s3Name, s2Name);
+            } else {
+              if (!isS1Thyristor) activeSwitches.push(s1Name, s4Name);
+              else activeSwitches.push(s3Name, s2Name);
+            }
+            activePairLabel = `Freewheeling (${activeSwitches.join('+')})`;
+          }
+        }
       }
+    }
+
+    if (loadType === 'RLE' && vo < backEmf && Math.abs(io) < 0.05) {
+      vo = backEmf;
+      io = 0;
+      is = 0;
+      activeSwitches.length = 0;
+      activePairLabel = 'Blocking (vo = E)';
     }
 
     vBridge1 = vo;
@@ -324,11 +420,13 @@ function computeContinuousCurrent(
   alpha: number,
   params: ConverterParameters
 ): number {
-  const { resistance, inductance, backEmf, highlyInductive, vPeak, loadType } = params;
+  const { resistance, inductance, backEmf, highlyInductive, vPeak, loadType, showFreewheelingDiode } = params;
   const R = Math.max(resistance, 0.2);
 
-  // Exact steady state DC average
-  const vAvg = ((2 * vPeak) / PI) * Math.cos(alpha);
+  // Exact steady state DC average (with freewheeling diode, negative voltage is clamped so Vavg = (Vm/π)(1 + cosα))
+  const vAvg = showFreewheelingDiode
+    ? (vPeak / PI) * (1 + Math.cos(alpha))
+    : ((2 * vPeak) / PI) * Math.cos(alpha);
   const eVal = loadType === 'RLE' ? backEmf : 0;
   const netV = vAvg - eVal;
   const iAvg = Math.max(0.1, netV / R);
@@ -421,8 +519,15 @@ export function calculateConverterMetrics(
         Math.sqrt(1 - alphaRad / PI + Math.sin(2 * alphaRad) / (2 * PI));
     } else {
       // RL continuous
-      vDcAvg = ((2 * vPeak) / PI) * Math.cos(alphaRad);
-      vRms = vPeak / Math.SQRT2;
+      if (params.showFreewheelingDiode) {
+        vDcAvg = (vPeak / PI) * (1 + Math.cos(alphaRad));
+        vRms =
+          (vPeak / Math.SQRT2) *
+          Math.sqrt(Math.max(0, 1 - alphaRad / PI + Math.sin(2 * alphaRad) / (2 * PI)));
+      } else {
+        vDcAvg = ((2 * vPeak) / PI) * Math.cos(alphaRad);
+        vRms = vPeak / Math.SQRT2;
+      }
     }
   } else {
     // Double bridge
@@ -476,9 +581,13 @@ export function calculateConverterMetrics(
 
   const efficiency = pAc > 0.01 ? Math.min(100, (pDc / pAc) * 100) : 0;
 
+  const hasSwitchOverrides = Boolean(params.switchOverrides && Object.keys(params.switchOverrides).length > 0);
+  const finalVDc = hasSwitchOverrides ? numVDc : (Number.isFinite(vDcAvg) ? vDcAvg : numVDc);
+  const finalVRms = hasSwitchOverrides ? numVRms : (Number.isFinite(vRms) ? vRms : numVRms);
+
   return {
-    vDcAvg: Number.isFinite(vDcAvg) ? vDcAvg : numVDc,
-    vRms: Number.isFinite(vRms) ? vRms : numVRms,
+    vDcAvg: finalVDc,
+    vRms: finalVRms,
     iDcAvg: numIDc,
     iRms: numIRms,
     pDc,
